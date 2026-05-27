@@ -1,0 +1,93 @@
+Post-rollout: Strategy 3 applied to llm-gateway
+
+Date applied:   2026-05-27 (UTC)
+Strategy doc:   docs/llm-gateway-routing-strategies.md (Strategy 3)
+Base strategy:  litellm-only via open_ai slot
+
+## What changed
+
+  /etc/llm-gateway/config.yaml   (chmod 640 root:llm-gw) — rewritten
+  /etc/llm-gateway/env           (chmod 600 root:llm-gw) — rewritten
+
+  Backups kept on the VM:
+    /etc/llm-gateway/config.yaml.bak.20260527T153557Z   (root:root 640)
+    /etc/llm-gateway/env.bak.20260527T153557Z           (root:root 640)
+
+## Config delta (sensitive values REDACTED)
+
+  Before: open_ai/anthropic providers with empty ${VAR} keys; no api_keys block.
+  After:  open_ai pointed at http://158.178.246.59:11434 (litellm) with
+          OPENAI_API_KEY env var set to the litellm key;
+          api_keys block enabled with three tiers.
+
+  /etc/llm-gateway/env now contains:
+    OPENAI_API_KEY=<REDACTED-LITELLM-KEY>
+    ANTHROPIC_API_KEY=                          # empty; add real key to enable claude-*
+
+## Tier → allowed_models
+
+  admin   → ["*"]                # no model whitelist (router still decides routability)
+  dev     → ["gpt-oss-120b"]     # free path only
+  partner → ["hermes-405b"]      # needs a litellm gpt-*-prefixed alias to route end-to-end
+
+  All three tier keys generated via `llm-gateway genkey`:
+    sk-gw-<64-hex>
+  Keys live in:
+    /etc/llm-gateway/config.yaml             (canonical — read by service)
+    ~/zrok-rollout/secrets/llm-gateway-keys.env (chmod 600, ubuntu:ubuntu — for recovery)
+  Keys are NOT in this repo (excluded by .gitignore: secrets/, *.env).
+
+## Service state after restart
+
+  systemctl is-active llm-gateway      → active
+  journalctl init log lines:
+    "initialized openai provider at 'http://158.178.246.59:11434'"
+    "initialized anthropic provider"                  (empty key; harmless until claude-*)
+    "loaded 3 API key(s)"
+    "listener ready for share 'llm-gateway'"
+
+## Routing reality check
+
+  With only open_ai slot pointed at litellm and no local slot:
+    model="gpt-oss-120b"             → gpt-* prefix → open_ai → litellm → OpenRouter → gpt-oss-120b   ✓
+    model="hermes-405b"              → no prefix match → local slot (unconfigured) → 400              ✗
+    model="claude-3-5-sonnet-..."    → claude- prefix → anthropic slot (empty key) → upstream 401     ✗
+    model="anything-else"            → local slot (unconfigured) → 400                                ✗
+
+  Implication: partner tier as configured (hermes-405b) will hit a routing
+  error. To make it work end-to-end, either:
+    a) Add a litellm alias mapping a gpt-*-prefixed name to hermes-405b
+       (e.g. model_name: gpt-hermes-405b → openrouter/.../hermes-405b)
+       and update partner.allowed_models accordingly, or
+    b) Configure the local slot in llm-gateway with a sidecar that injects
+       the bearer header into litellm-bound requests (Strategy 1 pitfall).
+
+## Smoke-test commands (run from a zrok-enabled client)
+
+  zrok2 access private llm-gateway --bind 127.0.0.1:8800 &
+
+  # admin → gpt-oss-120b — expected: 200
+  curl -sS -X POST http://127.0.0.1:8800/v1/chat/completions \
+    -H "Authorization: Bearer <ADMIN_KEY>" \
+    -H "Content-Type: application/json" \
+    -d '{"model":"gpt-oss-120b","messages":[{"role":"user","content":"hi"}],"max_tokens":16}'
+
+  # dev → gpt-oss-120b — expected: 200
+  # dev → claude-3-5-sonnet — expected: 403 "model not allowed"
+  # no key — expected: 401
+  # partner → hermes-405b — expected: 400 "provider not configured" until alias added
+
+## Rollback (revert to pre-Strategy-3 state)
+
+  sudo install -o root -g llm-gw -m 640 \
+    /etc/llm-gateway/config.yaml.bak.20260527T153557Z /etc/llm-gateway/config.yaml
+  sudo install -o root -g llm-gw -m 600 \
+    /etc/llm-gateway/env.bak.20260527T153557Z         /etc/llm-gateway/env
+  sudo systemctl restart llm-gateway
+
+## Switch to a different strategy
+
+  Edit /etc/llm-gateway/config.yaml per the patterns in
+  docs/llm-gateway-routing-strategies.md, edit /etc/llm-gateway/env for any
+  new keys, restart the service. No persistent state to migrate; the zrok
+  share, Ziti identities, and reserved share token are all unaffected.
