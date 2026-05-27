@@ -20,6 +20,13 @@ non-obvious fixes for each. Read end-to-end before starting; reproducing
 this rollout takes ~30 minutes of hands-on time once prerequisites are
 ready.
 
+Once installed, see **[docs/llm-gateway-routing-strategies.md](./docs/llm-gateway-routing-strategies.md)**
+for four practical patterns to wire one or more LLM backends (real
+Anthropic, real OpenAI, a custom OpenAI-compatible endpoint like
+litellm) into the `llm-gateway` service — covering static splits,
+all-through-litellm with failover, multi-tenant API-key gating, and
+semantic auto-routing.
+
 ## Topology
 
 ```
@@ -67,8 +74,9 @@ ready.
 ├── INSTALLATION.md           — the comprehensive how-to
 ├── .gitignore
 ├── docs/
-│   ├── naming-map.md         — Ziti object names + tags
-│   └── sync-daemon-awareness.md
+│   ├── naming-map.md                       — Ziti object names + tags
+│   ├── sync-daemon-awareness.md
+│   └── llm-gateway-routing-strategies.md   — 4 patterns for wiring LLM backends
 ├── scripts/
 │   └── teardown-ziti.sh      — Layer-C rollback: deletes zrok-owned Ziti objects
 └── state/
