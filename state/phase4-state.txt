@@ -1,0 +1,61 @@
+Phase 4 — Let's Encrypt wildcard cert issued via Cloudflare DNS-01
+
+Date completed: 2026-05-26 (UTC)
+
+## Certificate
+
+  Name:            zrok.salamahsystems.com
+  Domains:         zrok.salamahsystems.com, *.zrok.salamahsystems.com
+  Key type:        ECDSA
+  Serial:          6c74d3f061c3140895545db3ba9528ad5a8
+  Issuer:          Let's Encrypt E7 (production, not staging)
+  notBefore:       2026-05-26T14:15:10Z
+  notAfter:        2026-08-24T14:15:09Z  (90 days, ~89 valid)
+
+## Paths
+
+  Live (symlinks, stable for service configs):
+    /etc/letsencrypt/live/zrok.salamahsystems.com/cert.pem
+    /etc/letsencrypt/live/zrok.salamahsystems.com/chain.pem
+    /etc/letsencrypt/live/zrok.salamahsystems.com/fullchain.pem
+    /etc/letsencrypt/live/zrok.salamahsystems.com/privkey.pem
+
+  Archive (where targets actually live, rotated on renewal):
+    /etc/letsencrypt/archive/zrok.salamahsystems.com/cert1.pem
+    /etc/letsencrypt/archive/zrok.salamahsystems.com/chain1.pem
+    /etc/letsencrypt/archive/zrok.salamahsystems.com/fullchain1.pem
+    /etc/letsencrypt/archive/zrok.salamahsystems.com/privkey1.pem  (perm 600 root:root)
+
+  Renewal config:
+    /etc/letsencrypt/renewal/zrok.salamahsystems.com.conf
+
+## Cloudflare API token storage
+
+  /root/.secrets/                       (perm 700 root:root)
+  /root/.secrets/cloudflare.ini         (perm 600 root:root)
+    dns_cloudflare_api_token = ***REDACTED***  (Zone:Read + DNS:Edit on salamahsystems.com)
+
+## Renewal automation
+
+  Timer:    certbot.timer (enabled, twice-daily)
+  Next run: 2026-05-27T02:01:40Z (and every ~12h)
+  Plugin:   python3-certbot-dns-cloudflare 2.0.0
+  Verified: `sudo certbot renew --dry-run` → simulated renewal succeeded
+
+## Deploy hook (planned for Phase 5)
+
+  To reload zrok2-frontend on renewal, after Phase 5 completes, add:
+    sudo certbot --no-eff-email \
+      certonly --dns-cloudflare \
+      --dns-cloudflare-credentials /root/.secrets/cloudflare.ini \
+      --deploy-hook "systemctl restart zrok2-frontend" \
+      --cert-name zrok.salamahsystems.com
+  (Updates the renewal config in /etc/letsencrypt/renewal/ to include the hook.)
+
+## Rollback (Phase 4 reversal)
+
+  sudo certbot delete --cert-name zrok.salamahsystems.com   # removes live/, archive/, renewal/ files
+  sudo certbot unregister --account <id>                    # optional: detach ACME account
+  sudo rm -f /root/.secrets/cloudflare.ini                  # if no longer needed
+  sudo apt purge -y certbot python3-certbot-dns-cloudflare python3-certbot
+  sudo apt autoremove -y

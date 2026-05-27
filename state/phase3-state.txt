@@ -1,0 +1,62 @@
+Phase 3 — zrok2 dependencies installed and locked to loopback
+
+Date completed: 2026-05-26 (UTC)
+
+## Packages installed (apt)
+
+  rabbitmq-server  3.12.1-1ubuntu1.2  (Erlang 25.x, beam.smp)
+  postgresql       16+257build1.1     (server 16.14)
+
+## Loopback-bind summary
+
+| Service      | Port  | Bound to     | Confirmed by                       |
+|--------------|-------|--------------|------------------------------------|
+| postgresql   | 5432  | 127.0.0.1    | listen_addresses=localhost (default) |
+| rabbitmq AMQP| 5672  | 127.0.0.1    | NODE_IP_ADDRESS in rabbitmq-env.conf |
+| rabbitmq dist| 25672 | 127.0.0.1    | DIST_PORT + ERL inet_dist_use_interface |
+| epmd         | 4369  | 127.0.0.1    | drop-in /etc/systemd/system/epmd.socket.d/override.conf |
+
+Cross-check (run any time):
+  sudo ss -tlnp | grep -E ':5672|:5432|:15672|:25672|:4369'
+
+## RabbitMQ specifics
+
+- Nodename pinned to **rabbit@localhost** (NODENAME in rabbitmq-env.conf, USE_LONGNAME=false)
+- Default `guest` user retained — `loopback_users` guard means guest can only auth from 127.0.0.1
+- Plan ctrl.yml uses amqp://guest:guest@127.0.0.1:5672 — works
+- Mnesia data dir: /var/lib/rabbitmq/mnesia/rabbit@localhost
+- Old empty mnesia dir from short-lived rabbit@sg-a1-vm-vnic was removed
+
+## PostgreSQL specifics
+
+- listen_addresses = localhost (Ubuntu default)
+- pg_hba.conf: scram-sha-256 required for host 127.0.0.1/32 ::1/128
+- Role: zrok2  (no superuser, no createdb, no createrole; standard login role)
+- Database: zrok2 (owner zrok2, encoding UTF8, locale C.UTF-8)
+- Smoke test: connect + create/insert/select/drop in zrok2 schema = OK
+
+## Files added/modified by this phase
+
+  /etc/rabbitmq/rabbitmq-env.conf                      (appended; backup .bak-20260526)
+  /etc/systemd/system/epmd.socket.d/override.conf      (new drop-in)
+  /var/lib/rabbitmq/mnesia/rabbit@localhost/...        (data, autocreated)
+
+## Secrets
+
+  ~/zrok-rollout/secrets/postgres.env     (chmod 600, owner ubuntu)
+    PG_USER, PG_DB, PG_PASS, PG_HOST, PG_PORT
+
+## Rollback (Phase 3 reversal)
+
+  sudo systemctl stop rabbitmq-server postgresql
+  sudo apt purge -y rabbitmq-server postgresql postgresql-16 postgresql-client-16
+  sudo apt autoremove -y
+  sudo rm -rf /var/lib/rabbitmq /etc/rabbitmq /var/lib/postgresql /etc/postgresql
+  sudo rm -f  /etc/systemd/system/epmd.socket.d/override.conf
+  sudo rmdir   /etc/systemd/system/epmd.socket.d 2>/dev/null
+  sudo systemctl daemon-reload
+  rm -rf ~/zrok-rollout/secrets/postgres.env
+
+## Permissions used
+
+  None new. Plain sudo (already available to ubuntu via cloud-init defaults).

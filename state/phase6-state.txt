@@ -1,0 +1,64 @@
+Phase 6 — Go toolchain installed, gateway binaries built
+
+Date completed: 2026-05-26 (UTC)
+
+## Go toolchain
+
+  Version:       go1.26.3 linux/arm64
+  Install path:  /usr/local/go
+  PATH file:     /etc/profile.d/go.sh
+                   export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
+
+  Tarball checksum verified against go.dev/dl/?mode=json:
+    sha256: 9d89a3ea57d141c2b22d70083f2c8459ba3890f2d9e818e7e933b75614936565
+
+## Modules built
+
+| Module | Version | Released | Notes |
+|---|---|---|---|
+| github.com/openziti/llm-gateway     | v0.1.4 | 2026-04-08 | OpenAI-compatible API proxy |
+| github.com/openziti/mcp-gateway     | v0.1.3 | 2026-03-27 | MCP server aggregator |
+
+## Binaries
+
+Source (developer workspace, not deleted in case rebuilds are needed):
+  ~/go/bin/llm-gateway     39.3 MB
+  ~/go/bin/mcp-gateway     41.3 MB
+  ~/go/bin/mcp-bridge      40.8 MB
+  ~/go/bin/mcp-tools       38.0 MB
+  ~/go/bin/mcp-filesystem   7.8 MB
+
+Installed system-wide (root:root, 0755):
+  /usr/local/bin/llm-gateway
+  /usr/local/bin/mcp-gateway
+  /usr/local/bin/mcp-bridge
+  /usr/local/bin/mcp-tools
+  /usr/local/bin/mcp-filesystem
+
+## Smoke tests
+
+  llm-gateway --help          → OK (subcommands: completion, genkey, help, run, version)
+  llm-gateway version         → "v0.1.x [developer build]"   (this is the upstream embed string)
+  llm-gateway run --help      → flags: --address, --zrok, --zrok-mode
+
+  mcp-gateway --help          → OK (subcommands: completion, help, run)
+  mcp-gateway run --help      → "Run the MCP gateway. Usage: mcp-gateway run <configPath>"
+
+  mcp-bridge                  → "bridge a local stdio mcp server to the network via zrok"
+  mcp-tools                   → http server / run client modes; create/delete deprecated
+  mcp-filesystem              → "sandboxed filesystem MCP server"
+
+## Rollback (Phase 6 reversal)
+
+  sudo rm -f /usr/local/bin/{llm-gateway,mcp-gateway,mcp-bridge,mcp-tools,mcp-filesystem}
+  rm -rf $HOME/go                                          # clears module cache + bin
+  sudo rm -rf /usr/local/go /etc/profile.d/go.sh
+
+## Open items for Phase 7
+
+  - llm-gateway needs a config file (`run <configPath>` is required, no defaults)
+  - mcp-gateway also needs a config file
+  - The `--zrok` flag bakes share creation into the binary's runtime — alternative
+    to the plan's approach of reserving shares separately. Need to decide whether
+    to let llm-gateway own its own share (--zrok-mode private) or to reserve
+    the share externally via `zrok2 reserve` as the plan describes.

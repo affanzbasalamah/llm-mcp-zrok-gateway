@@ -1,0 +1,126 @@
+Phase 5 — zrok2 self-hosted installed against external Ziti
+
+Date completed: 2026-05-26 (UTC)
+zrok2 version:  2.0.4 [6ff92039]
+
+## Public-facing endpoints
+
+  https://zrok.salamahsystems.com:443             — apex (zrok2-frontend)
+  https://*.zrok.salamahsystems.com:443           — wildcard share routing
+  ECDSA wildcard cert (Phase 4); issuer "Let's Encrypt E7"
+
+  TLS confirmed via openssl s_client to 127.0.0.1:443.
+  External TCP/443 unreachable from inside the VM due to OCI hairpin
+  restrictions — verify externally from another host.
+
+## Service state
+
+  zrok2-controller:   active  (listens 127.0.0.1:18080)
+  zrok2-frontend:     active  (listens 0.0.0.0:443, CAP_NET_BIND_SERVICE via drop-in)
+  postgresql:         active  (127.0.0.1:5432, zrok2 db has 41 zrok migrations applied)
+  rabbitmq-server:    active  (127.0.0.1:5672, exchange "dynamicProxy", guest user)
+
+## Repository
+
+  GPG keyring:  /usr/share/keyrings/openziti.gpg
+  Sources:      /etc/apt/sources.list.d/openziti-release.list
+                deb [signed-by=...] https://packages.openziti.org/zitipax-openziti-deb-stable debian main
+  Note:         The original plan said "noble main" — wrong. The openziti repo only
+                has bionic/focal/jammy/debian, no noble. "debian" is the correct
+                codename, as documented by zrok docs.
+
+## External Ziti objects created (all tagged owner=zrok-self-hosted-sg)
+
+  See ~/zrok-rollout/preflight/zrok-additions.md for the exhaustive
+  inventory with IDs.
+
+  Summary:
+    2 identities      : public, zrok-dynamic-proxy-controller
+    1 service         : zrok-dynamic-proxy-controller
+    1 ERP             : public (auto-created by zrok bootstrap; #all routers → @public)
+    1 SERP            : zrok-dpc-serp
+    2 service-policies: zrok-dpc-bind (Bind), zrok-dpc-dial (Dial)
+    1 config-type     : zrok.proxy.v1
+                        (NOT tagged — config-types lack tag support in zrok bootstrap path)
+
+  No production object was modified except for adding tags + the role
+  attribute `dynamicFrontends` to the auto-created `public` identity
+  (the latter is required by zrok's frontend.yml schema).
+
+## Phase 2.1 snapshot caveat (DISCOVERED in Phase 5.8)
+
+  The pre-flight snapshots captured in Phase 2.1 used the ziti CLI's
+  default page limit (10 items) and were truncated. Phase 5.8 diff
+  exposed this — actual production state had:
+
+    identities:        13 vs snapshot's 10 (missed "Default Admin", and 2 others)
+    service-policies:  17 vs snapshot's 10 (7 truncated)
+    configs:           17 vs snapshot's 10 (7 truncated)
+    services / ERPs / SERPs / config-types / edge-routers / auth-policies — all correct
+
+  Phase 5.8 refreshed the snapshots with `limit 1000`; originals are
+  preserved as `*.before-truncated.json`. Phase 2.1 logic in the
+  teardown-ziti.sh script always uses `limit 1000` (was correct from
+  the start) so rollback is unaffected.
+
+## Configs written this phase
+
+  /etc/zrok2/ctrl.yml          (chmod 640, zrok2-controller:zrok2-controller)
+  /etc/zrok2/frontend.yml      (chmod 640, zrok2-frontend:zrok2-frontend)
+  /etc/systemd/system/zrok2-controller.service.d/tls-group.conf
+  /etc/systemd/system/zrok2-frontend.service.d/cap-net-bind.conf
+
+## Identity files
+
+  /var/lib/zrok2-controller/.zrok2/identities/zrok-dynamic-proxy-controller.json  (chmod 600)
+  /var/lib/zrok2-controller/.zrok2/identities/public.json                          (chmod 600)
+  /var/lib/zrok2-frontend/.zrok2/identities/public.json                             (chmod 600, copied)
+
+## TLS access group
+
+  zrok2-tls (system group)
+    members: zrok2-frontend, zrok2-controller
+    owns /etc/letsencrypt/archive/zrok.salamahsystems.com/*.pem with g+r
+    /etc/letsencrypt, /live, /archive have o+x for path traversal
+
+## Records in zrok2 Postgres
+
+  accounts:                    1  (gateway-services@salamahsystems.com)
+  frontends:                   1  (token <REDACTED-FE>, public_name "public", dynamic, open)
+  namespaces:                  1  (token "public", name "zrok.salamahsystems.com", open)
+  namespace_frontend_mappings: 1  (default mapping ns#1 → fe#1)
+
+## Secrets file (chmod 600, ~/zrok-rollout/secrets/zrok2.env)
+
+  ZROK_ADMIN_TOKEN, ZITI_ADMIN_PASSWORD, FRONTEND_TOKEN, etc.
+
+  GATEWAY_ACCOUNT_PASS was lost during a sed mistake mid-phase. The
+  enable token (GATEWAY_ACCOUNT_TOKEN=<REDACTED-ACCOUNT-TOKEN>) is what we'll use
+  in Phase 7 — the password is only for the web console login and can
+  be reset via the controller API later if needed.
+
+## Open items at Phase 5 close
+
+  - No external HTTPS reachability test done from this VM (OCI hairpin
+    blocks self-test; user can verify externally from a workstation by:
+      curl -sI https://zrok.salamahsystems.com/
+    Expected: zrok 404 with cert chain chained to Let's Encrypt E7.)
+  - Bootstrap auto-created `public` ERP that is redundant with the
+    pre-existing `all-endpoints-public-router` ERP. Both grant #all
+    routers; harmless overlap. Documented.
+
+## Rollback (Phase 5 reversal)
+
+  sudo systemctl disable --now zrok2-frontend zrok2-controller
+  sudo apt purge -y zrok2 zrok2-controller zrok2-frontend
+  sudo apt autoremove -y
+  sudo rm -rf /var/lib/zrok2-{controller,frontend} /etc/zrok2 \
+              /etc/systemd/system/zrok2-{controller,frontend}.service.d
+  sudo userdel zrok2-controller; sudo userdel zrok2-frontend
+  sudo groupdel zrok2-tls 2>/dev/null
+
+  # External Ziti cleanup (REQUIRED — see Phase 2.6):
+  ~/zrok-rollout/teardown-ziti.sh
+
+  # zrok2 database:
+  sudo -u postgres dropdb zrok2; sudo -u postgres dropuser zrok2

@@ -1,0 +1,111 @@
+Phase 8 — End-to-end verification complete
+
+Date completed: 2026-05-26 (UTC)
+
+## Verification matrix
+
+| # | Check | Method | Result |
+|---|---|---|---|
+| 1 | systemd services | `is-active` on all 6 | all active (postgresql, rabbitmq, zrok2-controller, zrok2-frontend, llm-gateway, mcp-gateway) |
+| 2 | TLS apex (loopback) | curl --resolve to 127.0.0.1 | HTTP 404, valid LE chain (E7 issuer), cert verify OK |
+| 3 | Wildcard routing | curl --resolve random.zrok... | HTTP 404 — proves frontend routing wildcard hostnames |
+| 4 | host_match rejection | curl --resolve notazrokdomain.example | HTTP 000 (connection rejected by host_match) |
+| 5 | External 443 | WebFetch | HTTP 404 (zrok "no such share") |
+| 6 | External wildcard | WebFetch abc123.zrok... | HTTP 404 |
+| 7 | Ziti additions tagged | inventory by owner=zrok-self-hosted-sg | 2 identities, 1 service, 1 SERP, 2 SPs, 1 ERP |
+| 8 | Per-share Ziti objects | tags.zrokShareToken not null | 2 services: llm-gateway, mcp-gateway |
+| 9 | llm-gateway via Ziti | zrok2 access + curl /v1/models | HTTP 200, 873 bytes, full Anthropic + OpenAI model list |
+| 10| mcp-gateway via Ziti | zrok2 access + GET / | HTTP 200; POST /mcp returns 400 (session-required, expected for streamable HTTP) |
+
+## Host firewall fix (Phase 8 unblocked external reachability)
+
+Found during Phase 8.3 that the host iptables INPUT chain had rule #9
+`REJECT --reject-with icmp-host-prohibited`, which was blocking external
+TCP/443 before it reached zrok2-frontend (which binds to *:443 on the host).
+
+Added (with explicit user approval):
+  iptables -I INPUT 9 -p tcp --dport 443 -m state --state NEW -j ACCEPT
+Pre-change rules archived to:
+  ~/zrok-rollout/iptables-pre-phase8-20260526T162733Z.rules
+Persisted via:
+  netfilter-persistent save  →  /etc/iptables/rules.v4 includes the new rule
+
+## Listener inventory
+
+  *:443                       zrok2-frontend (TLS)        public
+  127.0.0.1:18080             zrok2-controller API        loopback
+  127.0.0.1:5432              postgresql                  loopback
+  127.0.0.1:5672              rabbitmq AMQP               loopback
+  127.0.0.1:25672             rabbitmq dist               loopback
+  127.0.0.1:4369              epmd                        loopback
+  0.0.0.0:22                  sshd                        public (SSH)
+  0.0.0.0:111                 rpcbind                     public (preexisting)
+  100.74.151.2:44277          tailscale                   tailnet only
+  [fd7a:115c:a1e0::...]:50341 tailscale (IPv6)            tailnet only
+  127.0.0.53:53, 127.0.0.54:53  systemd-resolved          loopback
+
+llm-gateway and mcp-gateway do NOT have local TCP listeners — they're
+exclusively reachable via their reserved private zrok shares
+(llm-gateway, mcp-gateway). Traffic terminates inside the Go process
+that's bound directly to a Ziti edge listener.
+
+## Ziti audit summary (post Phase 8)
+
+External controller: zerotrust.salamahsystems.com:1280 (production)
+
+Tagged `owner=zrok-self-hosted-sg`:
+  identities:  zrok-dynamic-proxy-controller (K.9NYOseM)
+               public (eYd7YWweM)
+  service:     zrok-dynamic-proxy-controller (263tbWef65M3tCGd0zoZxo)
+  ERP:         public (5fozdmXf7NUjT1TeghMJSx)
+  SERP:        zrok-dpc-serp (5HB3QTnvS6qf2fVhZ97yZl)
+  SPs:         zrok-dpc-bind (Bind, XQqSA1rploBj6uCB7Mrkt)
+               zrok-dpc-dial (Dial, 5HvruNJbVPBC238A8IGRgc)
+  config-type: zrok.proxy.v1 (1yr6AvisPRMYdsrxUPUhYK)   # untagged — config-types lack tag support
+
+Zrok-internal-created (tag zrokShareToken):
+  services:    llm-gateway, mcp-gateway
+
+Zrok env identities (created by `zrok2 enable`, recognizable by zrokEmail tag):
+  2nJHyOw8M  gateway-services@...-2bgoon82378t-llm-gw@sg-a1-vm-vnic
+  v3NHJWseMA gateway-services@...-5o9v13tiy4v7-mcp-gw@sg-a1-vm-vnic
+
+No pre-existing production object was modified except:
+  - `public` identity gained role attribute `dynamicFrontends` (Phase 5.3)
+  - `public` ERP gained tag `owner=zrok-self-hosted-sg` (Phase 5.3)
+
+## What works now end-to-end
+
+  https://zrok.salamahsystems.com/                      → frontend (404, no share)
+  https://*.zrok.salamahsystems.com/                    → wildcard routing live
+
+  Internal access via Ziti overlay (anyone with a zrok env under
+  gateway-services@salamahsystems.com or granted by it):
+    zrok2 access private llm-gateway --bind 127.0.0.1:9191
+    zrok2 access private mcp-gateway --bind 127.0.0.1:9192
+
+## What still needs the user
+
+  - LLM provider keys → /etc/llm-gateway/env (OPENAI_API_KEY, ANTHROPIC_API_KEY)
+  - Real MCP backends → /etc/mcp-gateway/config.yaml (replace scratch-fs)
+  - First non-admin zrok account → currently only gateway-services@ exists
+
+## Full state files
+
+  Phase 0:   ~/zrok-rollout/phase0.5-preflight.txt
+  Phase 0.6: ~/zrok-rollout/baseline-backup.txt
+  Phase 1:   ~/zrok-rollout/phase1-seclist-{before,proposed-ingress}.json
+  Phase 2:   ~/zrok-rollout/preflight/, ~/zrok-rollout/teardown-ziti.sh,
+             ~/zrok-rollout/naming-map.md, ~/zrok-rollout/sync-daemon-awareness.md,
+             ~/zrok-rollout/phase2.7-snapshot-location.txt
+  Phase 3:   ~/zrok-rollout/phase3-state.txt
+  Phase 4:   ~/zrok-rollout/phase4-state.txt
+  Phase 5:   ~/zrok-rollout/phase5-state.txt
+  Phase 6:   ~/zrok-rollout/phase6-state.txt
+  Phase 7:   ~/zrok-rollout/phase7-state.txt
+  Phase 8:   ~/zrok-rollout/phase8-state.txt  (this file)
+  iptables:  ~/zrok-rollout/iptables-pre-phase8-20260526T162733Z.rules
+
+  Secrets (chmod 600):
+  ~/zrok-rollout/secrets/postgres.env
+  ~/zrok-rollout/secrets/zrok2.env

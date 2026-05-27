@@ -1,0 +1,106 @@
+Phase 7 — Gateways running as private zrok shares (Approach A)
+
+Date completed: 2026-05-26 (UTC)
+
+## Service accounts
+
+  llm-gw  uid 995  gid 985  home /home/llm-gw  shell /usr/sbin/nologin
+  mcp-gw  uid 994  gid 984  home /home/mcp-gw  shell /usr/sbin/nologin
+
+## zrok2 environments (both under gateway-services@salamahsystems.com account)
+
+  env id 1: llm-gw@sg-a1-vm-vnic    Ziti identity 2nJHyOw8M
+  env id 2: mcp-gw@sg-a1-vm-vnic    Ziti identity v3NHJWseMA
+  env id 3: verify@sg-a1-vm-ubuntu  (DELETED after Phase 7.6 verification)
+
+  Each user's zrok2 client uses apiEndpoint http://127.0.0.1:18080 (loopback).
+  External URL https://zrok.salamahsystems.com is unreachable from this VM due
+  to OCI hairpin; the loopback path is mandatory for service config.
+
+## Reserved private shares (custom-named, stable across restarts)
+
+  share id 1: token "llm-gateway"  Ziti service 1zZOQYkBtHx4gDJhKA1WbG  backend proxy
+  share id 2: token "mcp-gateway"  Ziti service 7P05ni5rx5bLkUqlOmKiZd  backend proxy
+
+  Created with:
+    sudo -u <user> zrok2 create share --backend-mode proxy --share-token <name>
+
+## llm-gateway
+
+  Binary:      /usr/local/bin/llm-gateway   v0.1.4
+  Config:      /etc/llm-gateway/config.yaml  (640 root:llm-gw)
+  Env file:    /etc/llm-gateway/env          (640 root:llm-gw, empty placeholders)
+  Systemd:     /etc/systemd/system/llm-gateway.service  (enabled, active)
+  Log dir:     /var/log/llm-gateway          (750 llm-gw:llm-gw)
+  Behavior:    Serves OpenAI-compatible API over the "llm-gateway" zrok private
+               share only. No local TCP listener while zrok.share.enabled=true.
+  Verified:    /health → {"status":"ok"}; /v1/models → 200 (873 bytes)
+
+  Providers configured (keys empty — scaffolded for Phase 7.3):
+    open_ai     api_key: ${OPENAI_API_KEY}
+    anthropic   api_key: ${ANTHROPIC_API_KEY}
+
+## mcp-gateway
+
+  Binary:      /usr/local/bin/mcp-gateway   v0.1.3
+  Config:      /etc/mcp-gateway/config.yaml  (640 root:mcp-gw)
+  Env file:    /etc/mcp-gateway/env          (640 root:mcp-gw)
+  Systemd:     /etc/systemd/system/mcp-gateway.service  (enabled, active)
+  Log dir:     /var/log/mcp-gateway          (750 mcp-gw:mcp-gw)
+  Data dir:    /var/lib/mcp-gateway/scratch  (750 mcp-gw:mcp-gw)
+  Behavior:    Serves aggregated MCP backends over the "mcp-gateway" zrok
+               private share. No local TCP listener (zrok-only).
+  Verified:    GET / → 200; GET /health → 200; GET /mcp → 200 (session-required
+               for actual JSON-RPC); end-to-end path through Ziti works.
+
+  Aggregator config:
+    name: salamahsystems-mcp
+    version: 0.1
+    separator: _
+
+  Backends (scaffold — replace with real MCP servers):
+    scratch-fs: stdio /usr/local/bin/mcp-filesystem /var/lib/mcp-gateway/scratch
+                tools.mode=allow tools.list=[list_directory]
+
+## Systemd hardening (applied to both units)
+
+  NoNewPrivileges, ProtectSystem=strict, ProtectHome=read-only,
+  ReadWritePaths scoped, PrivateTmp, ProtectKernelTunables/Modules/ControlGroups,
+  RestrictAddressFamilies (AF_INET, AF_INET6, AF_UNIX), LockPersonality,
+  RestrictSUIDSGID.
+  llm-gateway adds: MemoryDenyWriteExecute, PrivateDevices.
+  mcp-gateway omits MemoryDenyWriteExecute (can break some stdio backend runtimes).
+
+## Verification (Phase 7.6)
+
+  zrok2 access private llm-gateway --bind 127.0.0.1:9191 --headless &
+  curl -s http://127.0.0.1:9191/health         # {"status":"ok"}
+  curl -s http://127.0.0.1:9191/v1/models      # 200, 873 bytes
+
+  zrok2 access private mcp-gateway --bind 127.0.0.1:9192 --headless &
+  curl -s http://127.0.0.1:9192/health         # 200
+  curl -X POST http://127.0.0.1:9192/mcp ...   # "sessionid must be provided" → MCP listener live
+
+## Open items
+
+  - LLM provider keys (OPENAI_API_KEY, ANTHROPIC_API_KEY) — set in /etc/llm-gateway/env,
+    chmod 640 root:llm-gw, then `systemctl restart llm-gateway`.
+  - mcp-gateway backend list (/etc/mcp-gateway/config.yaml backends:) — replace
+    scratch-fs placeholder with real MCP servers, then `systemctl restart mcp-gateway`.
+  - api_keys block in llm-gateway config (optional): adds Authorization: Bearer
+    gate. Generate with `llm-gateway genkey`.
+
+## Rollback (Phase 7 reversal)
+
+  sudo systemctl disable --now llm-gateway mcp-gateway
+  sudo rm -f /etc/systemd/system/{llm,mcp}-gateway.service
+  sudo systemctl daemon-reload
+  sudo rm -rf /etc/llm-gateway /etc/mcp-gateway /var/log/llm-gateway \
+              /var/log/mcp-gateway /var/lib/mcp-gateway
+
+  # Disable + delete the per-environment zrok2 state (deletes Ziti identities + share):
+  sudo -u llm-gw zrok2 disable
+  sudo -u mcp-gw zrok2 disable
+
+  sudo userdel -r llm-gw
+  sudo userdel -r mcp-gw

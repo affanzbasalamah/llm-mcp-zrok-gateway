@@ -1,0 +1,24 @@
+# Secrets — never commit these
+secrets/
+*.env
+.env
+*.env.local
+*.key
+*.pem
+*.jwt
+*.crt
+*.p12
+*.pfx
+
+# OS / editor noise
+.DS_Store
+*.swp
+.idea/
+.vscode/
+*.bak
+*.tmp
+*~
+
+# Runtime artifacts
+*.log
+*.pid
