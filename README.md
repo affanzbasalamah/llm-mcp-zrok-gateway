@@ -27,6 +27,35 @@ litellm) into the `llm-gateway` service — covering static splits,
 all-through-litellm with failover, multi-tenant API-key gating, and
 semantic auto-routing.
 
+## Current routing state
+
+This deployment runs **Strategy 3** (multi-tenant API-key gating) — see
+**[state/strategy3-applied.txt](./state/strategy3-applied.txt)** for the
+full apply log, rollback, and smoke-test results.
+
+Provider slots in `/etc/llm-gateway/config.yaml`:
+
+| Slot      | Upstream                              | Status |
+|-----------|---------------------------------------|--------|
+| open_ai   | `http://158.178.246.59:11434` (litellm → OpenRouter → `gpt-oss-120b`) | live |
+| anthropic | `https://api.anthropic.com` (direct, `claude-haiku-4-5` verified)     | live |
+| local     | unconfigured                          | —      |
+
+Three API-key tiers (keys live only on the VM at `/etc/llm-gateway/config.yaml`
+and `~/zrok-rollout/secrets/llm-gateway-keys.env`, never in this repo):
+
+| Tier    | `allowed_models`     | Reachable today                                                          |
+|---------|----------------------|--------------------------------------------------------------------------|
+| admin   | `["*"]`              | any `gpt-*` (→ litellm), any `claude-*` (→ Anthropic)                    |
+| dev     | `["gpt-oss-120b"]`   | `gpt-oss-120b` only; everything else 403                                 |
+| partner | `["hermes-405b"]`    | none end-to-end — needs a `gpt-*`-prefixed litellm alias to route        |
+
+Routing rule (model-name prefix, from `providers/router.go`):
+
+- `gpt-*` / `o1-*` / `o3-*` → `open_ai` slot (litellm)
+- `claude-*` → `anthropic` slot (api.anthropic.com)
+- anything else → `local` slot (currently returns `400 provider not configured`)
+
 ## Topology
 
 ```
@@ -80,8 +109,9 @@ semantic auto-routing.
 ├── scripts/
 │   └── teardown-ziti.sh      — Layer-C rollback: deletes zrok-owned Ziti objects
 └── state/
-    └── phase[N]-state.txt    — per-phase artifact reports (with the user's specific OCIDs
-                                 — useful as a worked example, sanitize before reuse)
+    ├── phase[N]-state.txt          — per-phase artifact reports (with the user's specific OCIDs
+    │                                 — useful as a worked example, sanitize before reuse)
+    └── strategy3-applied.txt       — current llm-gateway routing config, smoke tests, rollback
 ```
 
 ## Disclaimer
