@@ -12,6 +12,8 @@ Base strategy:  litellm-only via open_ai slot
   Backups kept on the VM:
     /etc/llm-gateway/config.yaml.bak.20260527T153557Z   (root:root 640)
     /etc/llm-gateway/env.bak.20260527T153557Z           (root:root 640)
+    /etc/llm-gateway/env.bak.20260528T013838Z           (root:llm-gw 600) — pre-Anthropic-key
+
 
 ## Config delta (sensitive values REDACTED)
 
@@ -22,7 +24,7 @@ Base strategy:  litellm-only via open_ai slot
 
   /etc/llm-gateway/env now contains:
     OPENAI_API_KEY=<REDACTED-LITELLM-KEY>
-    ANTHROPIC_API_KEY=                          # empty; add real key to enable claude-*
+    ANTHROPIC_API_KEY=<REDACTED-ANTHROPIC-KEY>   # populated 2026-05-28; claude-* route is live
 
 ## Tier → allowed_models
 
@@ -48,10 +50,11 @@ Base strategy:  litellm-only via open_ai slot
 
 ## Routing reality check
 
-  With only open_ai slot pointed at litellm and no local slot:
+  With open_ai pointed at litellm, anthropic pointed at api.anthropic.com, and no local slot:
     model="gpt-oss-120b"             → gpt-* prefix → open_ai → litellm → OpenRouter → gpt-oss-120b   ✓
+    model="claude-haiku-4-5"         → claude- prefix → anthropic → api.anthropic.com                 ✓
+    model="claude-3-5-haiku-latest"  → claude- prefix → anthropic → upstream 404 (model retired)      ✗
     model="hermes-405b"              → no prefix match → local slot (unconfigured) → 400              ✗
-    model="claude-3-5-sonnet-..."    → claude- prefix → anthropic slot (empty key) → upstream 401     ✗
     model="anything-else"            → local slot (unconfigured) → 400                                ✗
 
   Implication: partner tier as configured (hermes-405b) will hit a routing
@@ -98,6 +101,31 @@ Base strategy:  litellm-only via open_ai slot
       section above; remediation is the litellm gpt-*-prefixed alias (option a).
     - End-to-end chain confirmed: zrok dial → llm-gateway → litellm @158.178.246.59
       → OpenRouter → gpt-oss-120b.
+
+## Smoke-test results — Anthropic route (executed 2026-05-28 UTC)
+
+  Triggered by populating ANTHROPIC_API_KEY in /etc/llm-gateway/env and restarting
+  the service. Init log unchanged from the empty-key run ("initialized anthropic
+  provider") — the gateway initializes the provider unconditionally; only the
+  upstream call surfaces auth state.
+
+    T6  admin   claude-3-5-haiku-latest      → 404   "model: claude-3-5-haiku-latest"   (Anthropic 404; alias retired)
+    T7  dev     claude-3-5-haiku-latest      → 403   "model '...' not allowed ..."      (gateway middleware, no upstream call)
+    T8  admin   claude-3-5-sonnet-20241022   → 404   "model: claude-3-5-sonnet-..."     (Anthropic 404; ID retired)
+    T9a admin   claude-haiku-4-5             → 200   reply: "pong"                      (~0.7s, full chain works)
+    T9b admin   claude-3-5-haiku-20241022    → 404   Anthropic 404
+    T9c admin   claude-3-haiku-20240307      → 404   Anthropic 404
+
+  Observations:
+    - T9a confirms the Anthropic route end-to-end: zrok dial → llm-gateway →
+      api.anthropic.com via /v1/messages with x-api-key. The gateway translates
+      Anthropic's native response back into OpenAI chat-completion shape
+      ("object":"chat.completion", "choices", "finish_reason").
+    - T7 confirms tier gating still correct after key rotation: dev key denied
+      against any claude-* model at the middleware in ~30ms, no upstream call.
+    - Older claude-3-* model IDs return Anthropic 404. They are not gateway-side
+      failures; the API key's tier no longer exposes them. claude-haiku-4-5 (and
+      newer 4-series IDs) is the current cheap path.
 
 ## Rollback (revert to pre-Strategy-3 state)
 
