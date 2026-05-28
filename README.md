@@ -108,6 +108,9 @@ Routing rule (model-name prefix, from `providers/router.go`):
 │   └── llm-gateway-routing-strategies.md   — 4 patterns for wiring LLM backends
 ├── scripts/
 │   └── teardown-ziti.sh      — Layer-C rollback: deletes zrok-owned Ziti objects
+├── systemd/
+│   └── zrok-access-llm-gateway.service  — persistent zrok dial re-binding the
+│                                          private share onto the tailnet
 └── state/
     ├── phase[N]-state.txt          — per-phase artifact reports (with the user's specific OCIDs
     │                                 — useful as a worked example, sanitize before reuse)
