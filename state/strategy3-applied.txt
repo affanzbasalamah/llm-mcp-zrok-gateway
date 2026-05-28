@@ -127,6 +127,38 @@ Base strategy:  litellm-only via open_ai slot
       failures; the API key's tier no longer exposes them. claude-haiku-4-5 (and
       newer 4-series IDs) is the current cheap path.
 
+## Client access — tailnet-bound systemd unit (added 2026-05-28 UTC)
+
+  The llm-gateway share is private, so it has no public URL: something must
+  *dial* it. The zrok controller API is loopback-only (127.0.0.1:18080) and is
+  not proxied by the :443 frontend, so off-box machines can't run their own
+  zrok client against this controller without further exposure work.
+
+  Chosen path: let the VM be the zrok client. A systemd unit runs a persistent
+  `zrok2 access private` dial and re-binds it onto the VM's Tailscale interface,
+  so any tailnet peer reaches the gateway as a plain HTTP endpoint — no zrok
+  install, no enable token, no public surface; data plane still rides Ziti.
+
+  Unit (tracked in repo at systemd/zrok-access-llm-gateway.service):
+    /etc/systemd/system/zrok-access-llm-gateway.service   (root:root 644)
+    ExecStart: zrok2 access private llm-gateway --bind 100.74.151.2:8800 --headless
+    User=mcp-gw (the Dial identity; llm-gw owns the Bind side of the share)
+    After=tailscaled.service + StartLimitIntervalSec=0 + Restart=on-failure
+      → keeps retrying until the tailnet IP exists (boot ordering / TS flaps)
+    Hardening mirrors mcp-gateway.service.
+
+  Client usage (from any tailnet peer, e.g. a Mac — no zrok client needed):
+    curl -sS -X POST http://100.74.151.2:8800/v1/chat/completions \
+      -H "Authorization: Bearer <TIER_KEY>" \
+      -H "Content-Type: application/json" \
+      -d '{"model":"gpt-oss-120b","messages":[{"role":"user","content":"hi"}]}'
+    Or point any OpenAI SDK at base_url http://100.74.151.2:8800/v1 + a tier key.
+
+  Manage:  sudo systemctl {status,restart,stop,disable} zrok-access-llm-gateway
+
+  Note: 100.74.151.2 is this VM's Tailscale address — environment-specific.
+  Tailnet ACLs must permit peers to reach :8800 (default policy allows it).
+
 ## Rollback (revert to pre-Strategy-3 state)
 
   sudo install -o root -g llm-gw -m 640 \

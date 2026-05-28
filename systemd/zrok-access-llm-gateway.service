@@ -1,0 +1,35 @@
+[Unit]
+Description=zrok access dial: llm-gateway private share -> tailnet 100.74.151.2:8800
+Documentation=https://github.com/openziti/zrok
+After=network-online.target tailscaled.service zrok2-controller.service llm-gateway.service
+Wants=network-online.target
+# The --bind target 100.74.151.2 is the Tailscale interface address; it only
+# exists once tailscaled has brought the tailnet up. Disable the start-rate
+# limit so the unit keeps retrying the bind until that address appears.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=mcp-gw
+Group=mcp-gw
+WorkingDirectory=/home/mcp-gw
+ExecStart=/usr/bin/zrok2 access private llm-gateway --bind 100.74.151.2:8800 --headless
+Restart=on-failure
+RestartSec=3
+
+# Hardening — mirrors mcp-gateway.service. zrok client needs RW on its own
+# ~/.zrok2 (identity + config), hence ProtectHome=read-only + ReadWritePaths.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/mcp-gw
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
