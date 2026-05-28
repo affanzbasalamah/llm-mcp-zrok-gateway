@@ -31,7 +31,9 @@ semantic auto-routing.
 
 This deployment runs **Strategy 3** (multi-tenant API-key gating) — see
 **[state/strategy3-applied.txt](./state/strategy3-applied.txt)** for the
-full apply log, rollback, and smoke-test results.
+full apply log, rollback, and smoke-test results. For how a client actually
+reaches the private share (and why there's no URL to open), see
+**[docs/llm-gateway-client-access.md](./docs/llm-gateway-client-access.md)**.
 
 Provider slots in `/etc/llm-gateway/config.yaml`:
 
@@ -105,7 +107,8 @@ Routing rule (model-name prefix, from `providers/router.go`):
 ├── docs/
 │   ├── naming-map.md                       — Ziti object names + tags
 │   ├── sync-daemon-awareness.md
-│   └── llm-gateway-routing-strategies.md   — 4 patterns for wiring LLM backends
+│   ├── llm-gateway-routing-strategies.md   — 4 patterns for wiring LLM backends
+│   └── llm-gateway-client-access.md        — how clients reach the private share + access matrix
 ├── scripts/
 │   └── teardown-ziti.sh      — Layer-C rollback: deletes zrok-owned Ziti objects
 ├── systemd/
