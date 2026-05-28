@@ -77,6 +77,28 @@ Base strategy:  litellm-only via open_ai slot
   # no key — expected: 401
   # partner → hermes-405b — expected: 400 "provider not configured" until alias added
 
+## Smoke-test results (executed 2026-05-28 UTC)
+
+  Bridge dialed via the mcp-gw zrok identity (llm-gw owns the Bind side of the
+  share; a separate Dial identity in the same account is the natural client):
+    sudo -u mcp-gw zrok2 access private llm-gateway --bind 127.0.0.1:8800 --headless &
+
+  Result matrix — every case matched the expectation above:
+
+    T1  admin   gpt-oss-120b              → 200   reply: "pong"                     (~3.2s)
+    T2  dev     gpt-oss-120b              → 200   reply: "Hello! How can I ..."     (~3.8s)
+    T3  dev     claude-3-5-sonnet-20241022→ 403   "model '...' is not allowed ..."  (~30ms)
+    T4  (none)  gpt-oss-120b              → 401   "API key required"                (~30ms)
+    T5  partner hermes-405b               → 400   "provider '' is not configured"   (~30ms)
+
+  Observations:
+    - Cold-path upstream latency ~3-4s through litellm → OpenRouter → gpt-oss-120b.
+    - All auth/routing rejections short-circuit in the gateway in ~30ms (no upstream call).
+    - T5 confirms the partner-tier dead-end called out in the "Routing reality check"
+      section above; remediation is the litellm gpt-*-prefixed alias (option a).
+    - End-to-end chain confirmed: zrok dial → llm-gateway → litellm @158.178.246.59
+      → OpenRouter → gpt-oss-120b.
+
 ## Rollback (revert to pre-Strategy-3 state)
 
   sudo install -o root -g llm-gw -m 640 \
