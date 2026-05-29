@@ -108,6 +108,79 @@ zrok access private llm-gateway --bind 127.0.0.1:8800
 # point the SDK at http://127.0.0.1:8800/v1 + tier key
 ```
 
+## Observability — seeing which client hit which model
+
+The gateway has three independent observability layers. Note up front: every
+"metrics" reference in `README.md` / `INSTALLATION.md` is about **zrok's**
+InfluxDB metrics (deliberately skipped in this rollout) — a *different*
+subsystem from the gateway's own observability described here.
+
+### 1. Routing logs — on by default, no config
+
+Every chat-completion request emits an INFO line showing model -> provider.
+This is unconditional; nothing to enable.
+
+```
+routing model 'gpt-oss-120b'    to openai       # handler.go:150  (success)
+routing model 'claude-haiku-4-5' to anthropic    # handler.go:150  (success)
+key 'dev' denied access to model 'claude-haiku-4-5'   # handler.go:134  (403)
+routing error for model 'hermes-405b': ...            # handler.go:144  (400, unroutable)
+```
+
+Watch it live:
+
+```bash
+sudo journalctl -u llm-gateway -f | grep -E "routing|denied"
+```
+
+**Gap to know:** the *success* line shows model -> provider but **not which
+key/client** made the call. Only the *denial* line names the key (`key 'dev'`).
+So out of the box you can see "a request went to Anthropic," not "the *admin*
+key's request went to Anthropic." For per-client correlation use metrics (#3).
+
+### 2. Tracing — opt-in request-body summary
+
+A `tracing` block logs a per-request summary: model, message count, stream flag,
+tool count, and each message's role + truncated content.
+
+```yaml
+# /etc/llm-gateway/config.yaml
+tracing:
+  enabled: true
+  max_content_length: 200   # per-message content truncation (default 200)
+```
+
+```
+trace: model='gpt-oss-120b' messages=1 stream=false tools=0
+trace:   [0] role='user' content='hi'
+```
+
+**Tradeoffs:** it logs **prompt content** (privacy/PII risk — keep off in
+production, use for short debug sessions only) and it still does **not** tag the
+key. Currently **off** (no `tracing:` block in config).
+
+### 3. Metrics — the only layer that ties key -> model -> provider
+
+The gateway exports OpenTelemetry meters; the `requests` and `request_duration`
+meters are tagged with `key` + `model` + `provider` + `streaming`
+(`handler.go:172,177`), plus `tokens_prompt` / `tokens_completion` and
+`provider_errors`. This is the clean path for "which client used which model."
+
+Currently **off** — there is no `metrics:` block in the config, so the meters
+are not initialized. To enable, add a `metrics:` block (and reach `/metrics`,
+which the API-key middleware leaves unauthenticated) with a Prometheus scraper.
+Because the gateway has no local listener (share-only), `/metrics` is reachable
+through the same zrok dial as the API — e.g. `http://100.74.151.2:8800/metrics`
+once a metrics block is configured.
+
+### Which to use
+
+| Need | Use |
+|------|-----|
+| "Did this request route to the right provider?" | #1 routing logs (already on) |
+| "What did a misrouted request actually contain?" | #2 tracing (debug only — logs prompts) |
+| "Which client/key used which model, and how often?" | #3 metrics (`key`+`model`+`provider` dims) |
+
 ## zrok vs OpenZiti vs Tailscale (clearing up the dependency)
 
 - **zrok does not require Tailscale.** Tailscale is incidental to this VM — it
