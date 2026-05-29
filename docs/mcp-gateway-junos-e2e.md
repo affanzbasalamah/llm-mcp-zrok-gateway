@@ -90,11 +90,35 @@ server runs on **hermes**, a tailnet host that sits on the JunOS LAN and reaches
 
 ## Verified (LLM in the loop)
 
-- `llm-gateway` (`gpt-oss-120b`) supports OpenAI tool-calling
-  (`finish_reason: tool_calls`).
-- Given "what model and Junos version is the router running?", the model
-  autonomously selected `junos_execute_junos_command("show version",
-  router_name="srx-im")` — correct tool, args, and device.
+`llm-gateway` (`gpt-oss-120b`) supports OpenAI tool-calling
+(`finish_reason: tool_calls`). A small agent loop —
+[`scripts/junos-llm-agent.py`](../scripts/junos-llm-agent.py) — lists the
+gateway's tools, hands them to `llm-gateway` as OpenAI function tools, executes
+the model's tool calls back through the gateway, and feeds results to the model.
+
+Two runs verified end to end (2026-05-29):
+
+1. **Single call** — *"what model and Junos version is the router running?"* →
+   the model autonomously called `junos_execute_junos_command("show version",
+   router_name="srx-im")` and answered `srx345-dual-ac`, Junos `24.2R1.17`.
+2. **Multi-step (5 chained calls)** — *"brief health check: model/version,
+   uptime, interface status, active alarms"* → the model issued `show version`,
+   `show system uptime`, `show interfaces terse`, and `show chassis alarms` in
+   sequence, then synthesized a health summary (~19-day uptime, no chassis
+   alarms, per-interface up/down). It also **self-recovered** from its own
+   mistake: one call used a wrong `router_name`, the gateway returned
+   `not found in the device mapping`, and the model retried with `srx-im`.
+
+Reproduce (on the OCI VM, dialer unit running):
+
+```bash
+export LLM_GW_KEY=<admin-tier-key>     # from /etc/llm-gateway + ~/zrok-rollout/secrets — never commit
+python3 scripts/junos-llm-agent.py "brief health check: model, version, uptime, interfaces, alarms"
+```
+
+The script self-heals a mid-loop relay flap: on `EOF`/connection error it
+restarts `mcp-access-junos-gateway` (fresh gateway session → fresh backend
+connection) and retries the call once.
 
 ## Known limitation — the OCI ⇄ hermes relay flaps
 

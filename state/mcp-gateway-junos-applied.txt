@@ -52,9 +52,11 @@ Goal:           e2e test — LLM manages SRX345-IM through mcp-gateway -> MCP se
     tools/list                       -> 6 junos_* tools (write/mgmt filtered)        OK
     junos_get_router_list            -> srx-im entry                                  OK
     junos_execute_junos_command      -> "show version" => SRX345-IM, Junos 24.2R1.17  OK
-  LLM in the loop (llm-gateway gpt-oss-120b):
-    tool-calling supported; model chose junos_execute_junos_command("show version",
-    router_name="srx-im") autonomously.                                              OK
+  LLM in the loop (llm-gateway gpt-oss-120b; repro: scripts/junos-llm-agent.py):
+    single call: model chose junos_execute_junos_command("show version", srx-im)     OK
+    multi-step:  model chained show version / system uptime / interfaces terse /
+                 chassis alarms (5 calls) + summarized; self-recovered from a wrong
+                 router_name (gateway returned "not found in device mapping")        OK
   gather_device_facts                -> too slow over the DERP relay (many RPCs)      timeout
 
 ## Caveat (operational)

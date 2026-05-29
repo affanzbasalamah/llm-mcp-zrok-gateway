@@ -120,7 +120,8 @@ is broken by a modem ALG, so Tailscale is used instead). Write-up + verification
 │   ├── llm-gateway-client-access.md        — how clients reach the private share + access matrix
 │   └── mcp-gateway-junos-e2e.md            — LLM-manages-JunOS-router e2e (MCP server on hermes via Tailscale)
 ├── scripts/
-│   └── teardown-ziti.sh      — Layer-C rollback: deletes zrok-owned Ziti objects
+│   ├── teardown-ziti.sh         — Layer-C rollback: deletes zrok-owned Ziti objects
+│   └── junos-llm-agent.py       — LLM agent loop driving the JunOS MCP tools (e2e verify/repro)
 ├── systemd/
 │   ├── zrok-access-llm-gateway.service  — persistent zrok dial re-binding the
 │   │                                      llm-gateway share onto the tailnet
