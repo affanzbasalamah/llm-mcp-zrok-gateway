@@ -105,7 +105,7 @@ socat:
 # inject Authorization: Bearer <litellm-key> on 127.0.0.1:11434
 # (run as a systemd unit; gateway points local.base_url at 127.0.0.1:11434)
 exec mitmdump --mode reverse:http://158.178.246.59:11434 \
-              --set Authorization="Bearer sk-litellm-sg-amd" \
+              --set Authorization="Bearer <your-litellm-key>" \
               --listen-port 11434
 ```
 
@@ -134,7 +134,7 @@ providers:
 
 ```
 # /etc/llm-gateway/env
-LITELLM_KEY=sk-litellm-sg-amd
+LITELLM_KEY=<your-litellm-key>
 ```
 
 On the litellm host (separate from this VM), configure `model_list`
