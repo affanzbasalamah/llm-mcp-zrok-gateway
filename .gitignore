@@ -9,6 +9,9 @@ secrets/
 *.crt
 *.p12
 *.pfx
+devices.json
+*.tokens
+.tokens
 
 # OS / editor noise
 .DS_Store

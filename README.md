@@ -58,6 +58,15 @@ Routing rule (model-name prefix, from `providers/router.go`):
 - `claude-*` → `anthropic` slot (api.anthropic.com)
 - anything else → `local` slot (currently returns `400 provider not configured`)
 
+## MCP gateway: live JunOS backend
+
+The `mcp-gateway` now aggregates a live Juniper **SRX345-IM** as a read-only
+backend — an LLM drives `show`-class JunOS commands through the gateway. The MCP
+server runs off-box on the tailnet host **hermes** (the SRX's direct IPsec path
+is broken by a modem ALG, so Tailscale is used instead). Write-up + verification
++ the relay caveat: **[docs/mcp-gateway-junos-e2e.md](./docs/mcp-gateway-junos-e2e.md)**,
+**[state/mcp-gateway-junos-applied.txt](./state/mcp-gateway-junos-applied.txt)**.
+
 ## Topology
 
 ```
@@ -108,16 +117,22 @@ Routing rule (model-name prefix, from `providers/router.go`):
 │   ├── naming-map.md                       — Ziti object names + tags
 │   ├── sync-daemon-awareness.md
 │   ├── llm-gateway-routing-strategies.md   — 4 patterns for wiring LLM backends
-│   └── llm-gateway-client-access.md        — how clients reach the private share + access matrix
+│   ├── llm-gateway-client-access.md        — how clients reach the private share + access matrix
+│   └── mcp-gateway-junos-e2e.md            — LLM-manages-JunOS-router e2e (MCP server on hermes via Tailscale)
 ├── scripts/
 │   └── teardown-ziti.sh      — Layer-C rollback: deletes zrok-owned Ziti objects
 ├── systemd/
-│   └── zrok-access-llm-gateway.service  — persistent zrok dial re-binding the
-│                                          private share onto the tailnet
+│   ├── zrok-access-llm-gateway.service  — persistent zrok dial re-binding the
+│   │                                      llm-gateway share onto the tailnet
+│   ├── mcp-access-junos-gateway.service — persistent dial of the mcp-gateway
+│   │                                      share → 127.0.0.1:8801 (JunOS MCP)
+│   └── jmcp.service                     — hermes USER unit: junos-mcp-server
+│                                          (streamable-http, NETCONF to the SRX)
 └── state/
     ├── phase[N]-state.txt          — per-phase artifact reports (with the user's specific OCIDs
     │                                 — useful as a worked example, sanitize before reuse)
-    └── strategy3-applied.txt       — current llm-gateway routing config, smoke tests, rollback
+    ├── strategy3-applied.txt       — current llm-gateway routing config, smoke tests, rollback
+    └── mcp-gateway-junos-applied.txt — mcp-gateway → JunOS (SRX) e2e: backend, units, verification
 ```
 
 ## Disclaimer

@@ -1,0 +1,74 @@
+Post-rollout: mcp-gateway wired to a live JunOS router (read-only)
+
+Date applied:   2026-05-29 (UTC)
+Doc:            docs/mcp-gateway-junos-e2e.md
+Goal:           e2e test — LLM manages SRX345-IM through mcp-gateway -> MCP server -> NETCONF
+
+## Topology (IPsec bypassed; Tailscale used instead)
+
+  LLM (llm-gateway gpt-oss-120b) -> mcp-gateway (zrok share "mcp-gateway")
+    -> http backend over Tailscale -> hermes jmcp (100.105.37.124:30030)
+    -> NETCONF/SSH -> SRX345-IM (192.168.0.254)
+
+  Why not the srx-tunnel IPsec path: the SRX is behind a modem whose IPsec ALG
+  breaks NAT-T (IKE remapped to :1025, no UDP-4500 float, IKE_AUTH reply never
+  returns). Modem cannot be changed. Tailscale (WireGuard) sidesteps it.
+
+## What changed
+
+  /etc/mcp-gateway/config.yaml  (640 root:mcp-gw) — rewritten
+    backups: /etc/mcp-gateway/config.yaml.bak.20260529T052442Z
+    backend "junos": transport http -> http://100.105.37.124:30030/mcp/
+      protocol streamable, allow_insecure true, header Authorization: Bearer <jmcp-token>
+    tools.mode allow (read-only, fail-safe):
+      get_router_list, gather_device_facts, get_junos_config,
+      junos_config_diff, execute_junos_command, execute_junos_command_batch
+    (load_and_commit_config + add_device intentionally NOT exposed)
+
+  /etc/systemd/system/mcp-access-junos-gateway.service  (644 root:root) — NEW
+    User=llm-gw; ExecStart=mcp-tools http mcp-gateway --bind 127.0.0.1:8801 --json-response
+    Restart=always. Bound to loopback (the MCP share has no client auth).
+    Tracked in repo: systemd/mcp-access-junos-gateway.service
+
+  hermes (~affan):
+    junos-mcp-server cloned; uv venv (~/.local/bin/uv; system lacked python3.12-venv, no sudo)
+    ~/.config/systemd/user/jmcp.service — NEW (tracked: systemd/jmcp.service)
+      ExecStart=.venv/bin/python jmcp.py -f devices.json -t streamable-http -H 100.105.37.124 -p 30030
+      needs: loginctl enable-linger affan  (for boot survival)
+    ~/junos-mcp-server/devices.json (600) — srx-im -> 192.168.0.254:22, user mcp, ssh_key
+    ~/junos-mcp-server/.tokens (600) — bearer token id "gateway"
+    ~/.ssh/junos_mcp_ed25519 (600) — key for SRX user mcp (pubkey installed on SRX, read-only class)
+
+  SRX345-IM config applied (by operator):
+    set system services ssh / netconf ssh
+    set system login user mcp authentication ssh-ed25519 "<hermes pubkey>"   (read-only class)
+    delete security ike gateway ike-gw-oci no-nat-traversal
+    set security ipsec vpn vpn-oci traffic-selector ts1 local-ip 192.168.0.0/24 remote-ip 10.0.1.0/24
+    (the IKE fixes were for the IPsec attempt; tunnel data plane still dead via modem ALG)
+
+## Verification (2026-05-29 UTC)
+
+  Through the gateway (mcp-tools bridge -> share -> gateway -> tailscale -> hermes -> SRX):
+    tools/list                       -> 6 junos_* tools (write/mgmt filtered)        OK
+    junos_get_router_list            -> srx-im entry                                  OK
+    junos_execute_junos_command      -> "show version" => SRX345-IM, Junos 24.2R1.17  OK
+  LLM in the loop (llm-gateway gpt-oss-120b):
+    tool-calling supported; model chose junos_execute_junos_command("show version",
+    router_name="srx-im") autonomously.                                              OK
+  gather_device_facts                -> too slow over the DERP relay (many RPCs)      timeout
+
+## Caveat (operational)
+
+  OCI <-> hermes Tailscale is a DERP relay (double-NAT, no direct link) and flaps.
+  mcp-gateway holds one backend connection per client session and does NOT
+  auto-reconnect; after a flap, restart the dialer:
+    sudo systemctl restart mcp-access-junos-gateway
+  Prefer execute_junos_command (single RPC) over gather_device_facts.
+
+## Rollback
+
+  sudo install -o root -g mcp-gw -m 640 \
+    /etc/mcp-gateway/config.yaml.bak.20260529T052442Z /etc/mcp-gateway/config.yaml
+  sudo systemctl disable --now mcp-access-junos-gateway
+  sudo systemctl restart mcp-gateway
+  # hermes: systemctl --user disable --now jmcp

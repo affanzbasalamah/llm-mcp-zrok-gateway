@@ -1,0 +1,25 @@
+# systemd USER unit for hermes (the JunOS-LAN MCP server host).
+# Install at ~/.config/systemd/user/jmcp.service, then:
+#   sudo loginctl enable-linger affan      # survive logout / reboot (needs root once)
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now jmcp
+#
+# Runs Juniper/junos-mcp-server in streamable-http mode bound to hermes's
+# Tailscale address. -H 100.105.37.124 is hermes's tailnet IP — environment
+# specific; change to match the host. devices.json + .tokens live alongside it
+# (chmod 600) and hold secrets — never commit them.
+
+[Unit]
+Description=Junos MCP server (jmcp) - streamable-http on tailscale -> NETCONF to SRX
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/junos-mcp-server
+ExecStart=%h/junos-mcp-server/.venv/bin/python %h/junos-mcp-server/jmcp.py -f %h/junos-mcp-server/devices.json -t streamable-http -H 100.105.37.124 -p 30030
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

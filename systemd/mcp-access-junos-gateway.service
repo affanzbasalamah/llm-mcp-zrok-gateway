@@ -1,0 +1,34 @@
+[Unit]
+Description=mcp-tools dial: mcp-gateway private share -> 127.0.0.1:8801 (JunOS MCP via hermes)
+Documentation=https://github.com/openziti/mcp-gateway
+After=network-online.target tailscaled.service zrok2-controller.service mcp-gateway.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=llm-gw
+Group=llm-gw
+WorkingDirectory=/home/llm-gw
+ExecStart=/usr/local/bin/mcp-tools http mcp-gateway --bind 127.0.0.1:8801 --json-response
+Restart=always
+RestartSec=5
+
+# Hardening — mirrors zrok-access-llm-gateway.service. mcp-tools needs RW on
+# its own ~/.zrok2 (zrok identity), hence ProtectHome=read-only + ReadWritePaths.
+# Bound to loopback on purpose: the MCP share has no client auth of its own.
+# NOTE: after an OCI<->hermes Tailscale relay flap the backend connection goes
+# stale (the gateway does not auto-reconnect) — restart this unit to recover.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/llm-gw
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
